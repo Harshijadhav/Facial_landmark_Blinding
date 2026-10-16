@@ -1,0 +1,10 @@
+Pattern,Strength %,Images,Ours error %,JPEG only error %,Noise error %,Ours PSNR dB,Ours SSIM,Ours disrupted %,p vs noise
+Colour pattern,8.0,28,0.77,0.68,0.72,38.3,0.9742,0.0,0.1709
+Colour pattern,16.0,28,0.87,0.68,0.83,36.17,0.966,0.0,0.3502
+Colour pattern,30.0,28,1.29,0.68,0.98,32.49,0.9398,0.0,0.0056
+Brightness only,8.0,28,0.81,0.68,0.72,37.96,0.9715,3.6,0.1855
+Brightness only,16.0,28,1.01,0.68,0.79,35.34,0.9546,7.1,0.0163
+Brightness only,30.0,28,1.48,0.68,1.01,31.34,0.9041,10.7,0.0
+Anchor-targeted,8.0,28,0.96,0.68,0.74,38.06,0.9708,0.0,0.0055
+Anchor-targeted,16.0,28,1.39,0.68,0.88,35.49,0.956,0.0,0.0001
+Anchor-targeted,30.0,28,2.17,0.68,1.16,31.53,0.9242,0.0,0.0
