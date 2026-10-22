@@ -14,7 +14,7 @@ import pandas as pd
 
 from src.evaluation import evaluate_images, paired_tests, summarize_conditions, summarize_robustness
 
-MODES = {"rgb": "Colour pattern", "luminance": "Brightness only", "anchors": "Anchor-targeted"}
+MODES = {"rgb": "Colour pattern", "luminance": "Brightness only", "anchors": "Anchor-targeted", "optimized": "Auto-tuned"}
 
 
 def load_images(folder, limit):
@@ -38,8 +38,9 @@ def main(argv=None):
     ap.add_argument("--sweep", type=float, nargs="+", help="several strengths, e.g. 8 16 24 30")
     ap.add_argument("--jpeg", type=int, default=75, help="JPEG quality")
     ap.add_argument("--max-side", type=int, default=1280, help="longest image side, 0 = full size")
-    ap.add_argument("--mode", choices=["rgb", "luminance", "anchors", "both", "all"], default="rgb")
+    ap.add_argument("--mode", choices=["rgb", "luminance", "anchors", "optimized", "both", "all"], default="rgb")
     ap.add_argument("--limit", type=int, default=100)
+    ap.add_argument("--opt-iters", type=int, default=25, help="search steps for --mode optimized")
     ap.add_argument("--robustness", action="store_true", help="also run the post-processing tests (slower)")
     args = ap.parse_args(argv)
 
@@ -68,7 +69,8 @@ def main(argv=None):
 
             per_image, robust, skipped = evaluate_images(
                 items, landmark_detector, face_detector, s / 100.0, args.jpeg,
-                max_side=max_side, robustness=args.robustness, progress=progress, mode=mode)
+                max_side=max_side, robustness=args.robustness, progress=progress, mode=mode,
+                opt_iterations=args.opt_iters)
             print()
             summary = summarize_conditions(per_image)
             tests = paired_tests(per_image)

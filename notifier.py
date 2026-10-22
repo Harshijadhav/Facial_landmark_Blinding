@@ -1,110 +1,61 @@
 """
 Delivers one-time codes.
 
-Email goes out through SMTP when these settings exist (otherwise the app uses demo mode):
-    SMTP_HOST, SMTP_USER, SMTP_PASSWORD   (required)
-    SMTP_PORT                             (optional, default 465)
-    SMTP_FROM                             (optional, defaults to SMTP_USER)
+Email is sent by whichever of these is set up (tried in this order):
+  1. Brevo web API (works even where SMTP ports are blocked):  BREVO_API_KEY, BREVO_SENDER
+  2. SMTP with STARTTLS on port 587 and then SSL on port 465:   SMTP_HOST, SMTP_USER, SMTP_PASSWORD
+     (optional: SMTP_PORT, SMTP_FROM)
+Put the settings in a file named .env next to app.py (see .env.example) or in the terminal.
 
-Where the settings come from:
-    1. Real environment variables (for example $env:SMTP_HOST in PowerShell), or
-    2. A file named .env next to this file, one KEY=value per line.
-Real environment variables win over .env, so a stale value in your terminal
-overrides the file. Restart Streamlit after changing either one.
-
-Sending is tolerant of blocked networks: the configured port is tried first and, if the
-connection itself fails (disconnect, timeout, SSL problem), the other standard mode is tried
-automatically (465 uses SSL, 587 uses STARTTLS). A wrong password is reported immediately
-and never retried.
-
-SMS: no SMS provider is connected, so phone codes always run in demo mode.
-
-In demo mode the caller shows the code on screen. That is only acceptable for a demo,
-because a real system never reveals the code to whoever is asking for it.
-
-Self-test (sends a real test email, prints what happened at each step):
-    python notifier.py                 # sends to SMTP_USER
-    python notifier.py someone@x.com   # sends to another address
+If email is set up but sending fails, the code is NOT shown on screen (it would defeat the point),
+unless ALLOW_DEMO_FALLBACK=1. If email is not set up at all, or for phone numbers (no SMS provider
+is connected), the app runs in demo mode and shows the code on screen.
 """
-import logging
+import json
 import os
 import smtplib
-import socket
 import ssl
-import sys
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
-from pathlib import Path
 
-try:
-    from database import RESET_CODE_MINUTES
-except ImportError:  # lets `python notifier.py` run on its own
-    RESET_CODE_MINUTES = 10
-
-log = logging.getLogger("notifier")
-
-ENV_FILE = Path(__file__).resolve().parent / ".env"
-
-# Errors that mean "the connection itself failed", so trying the other mode may help.
-CONNECTION_ERRORS = (
-    smtplib.SMTPServerDisconnected,
-    smtplib.SMTPConnectError,
-    ConnectionError,
-    TimeoutError,
-    socket.timeout,
-    ssl.SSLError,
-)
+from database import RESET_CODE_MINUTES
 
 
-class SendError(Exception):
-    """Raised when every attempt failed. `kind` is 'auth', 'network' or 'other'."""
-
-    def __init__(self, kind: str, detail: str):
-        super().__init__(detail)
-        self.kind = kind
-        self.detail = detail
-
-
-def _load_env_file(path: Path = None) -> bool:
-    """Reads KEY=value lines from .env without needing python-dotenv.
-    Existing environment variables are never overwritten. Returns True if a file was read."""
-    path = path or ENV_FILE
-    if not path.is_file():
-        return False
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip().removeprefix("export ").strip()
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        if key and key not in os.environ:
-            os.environ[key] = value
-    return True
+def _load_dotenv():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def _settings() -> dict:
-    """Reads and cleans the SMTP settings (called fresh each time, so edits are picked up)."""
-    _load_env_file()
-    user = os.environ.get("SMTP_USER", "").strip()
-    try:
-        port = int(os.environ.get("SMTP_PORT", "465").strip() or "465")
-    except ValueError:
-        port = 465
-    return {
-        "host": os.environ.get("SMTP_HOST", "").strip(),
-        "user": user,
-        # Google shows app passwords as four groups of four; spaces are not part of it.
-        "password": os.environ.get("SMTP_PASSWORD", "").strip().replace(" ", ""),
-        "from_addr": os.environ.get("SMTP_FROM", "").strip() or user,
-        "port": port,
-    }
+_load_dotenv()
+
+
+def _smtp_password():
+    return os.environ.get("SMTP_PASSWORD", "").replace(" ", "")   # Gmail shows app passwords in groups
 
 
 def smtp_configured() -> bool:
-    s = _settings()
-    return bool(s["host"] and s["user"] and s["password"])
+    return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_USER") and _smtp_password())
+
+
+def brevo_configured() -> bool:
+    return bool(os.environ.get("BREVO_API_KEY") and os.environ.get("BREVO_SENDER"))
+
+
+def email_configured() -> bool:
+    return smtp_configured() or brevo_configured()
+
+
+def allow_demo_fallback() -> bool:
+    return os.environ.get("ALLOW_DEMO_FALLBACK") == "1"
 
 
 def mask_email(email: str) -> str:
@@ -116,114 +67,82 @@ def mask_phone(phone: str) -> str:
     return "*" * max(len(phone) - 4, 0) + phone[-4:]
 
 
-def _attempt_plan(port: int):
-    """Ordered (mode, port) pairs to try. Only the two standard ports get a fallback."""
-    if port == 465:
-        return [("ssl", 465), ("starttls", 587)]
-    if port == 587:
-        return [("starttls", 587), ("ssl", 465)]
-    return [("starttls", port)]
-
-
-def _deliver(settings: dict, msg: EmailMessage, mode: str, port: int) -> None:
-    context = ssl.create_default_context()
-    if mode == "ssl":
-        with smtplib.SMTP_SSL(settings["host"], port, context=context, timeout=15) as server:
-            server.login(settings["user"], settings["password"])
-            server.send_message(msg)
-    else:
-        with smtplib.SMTP(settings["host"], port, timeout=15) as server:
-            server.starttls(context=context)
-            server.login(settings["user"], settings["password"])
-            server.send_message(msg)
-
-
-def _send_email(to_addr: str, username: str, code: str) -> str:
-    """Sends the code. Returns a label of the method that worked, e.g. 'SSL on port 465'.
-    Raises SendError if nothing worked."""
-    s = _settings()
-    if not (s["host"] and s["user"] and s["password"]):
-        raise SendError("other", "SMTP_HOST, SMTP_USER or SMTP_PASSWORD is not set")
-
+def _message(to_addr: str, username: str, code: str) -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = "Your password reset code"
-    msg["From"] = s["from_addr"]
+    msg["From"] = os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER") or os.environ.get("BREVO_SENDER", "")
     msg["To"] = to_addr
     msg.set_content(
         f"Hello {username},\n\n"
         f"Your one-time password reset code is {code}.\n"
         f"It expires in {RESET_CODE_MINUTES} minutes. If you did not ask for it, ignore this email.\n"
     )
+    return msg
 
-    failures = []
-    for mode, port in _attempt_plan(s["port"]):
-        label = f"{'SSL' if mode == 'ssl' else 'STARTTLS'} on port {port}"
+
+def _send_brevo(to_addr, username, code):
+    body = json.dumps({
+        "sender": {"name": "Landmark Blinding Studio", "email": os.environ["BREVO_SENDER"]},
+        "to": [{"email": to_addr}],
+        "subject": "Your password reset code",
+        "textContent": _message(to_addr, username, code).get_content(),
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email", data=body, method="POST",
+        headers={"api-key": os.environ["BREVO_API_KEY"], "content-type": "application/json",
+                 "accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        if resp.status not in (200, 201):
+            raise RuntimeError(f"HTTP {resp.status}")
+
+
+def _send_smtp(to_addr, username, code, port):
+    host, user, password = os.environ["SMTP_HOST"], os.environ["SMTP_USER"], _smtp_password()
+    msg = _message(to_addr, username, code)
+    context = ssl.create_default_context()
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=15, context=context) as server:
+            server.login(user, password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls(context=context)
+            server.login(user, password)
+            server.send_message(msg)
+
+
+def send_email(to_addr: str, username: str, code: str):
+    """Tries every configured route. Returns (ok, detail). detail names the failures, never a password."""
+    errors = []
+    if brevo_configured():
         try:
-            _deliver(s, msg, mode, port)
-            log.info("Reset email sent using %s", label)
-            return label
-        except smtplib.SMTPAuthenticationError as exc:
-            # Wrong credentials will not be fixed by another port, so stop here.
-            detail = f"{label}: {type(exc).__name__}: {exc}"
-            log.warning("Email login rejected: %s", detail)
-            raise SendError("auth", detail) from exc
-        except CONNECTION_ERRORS as exc:
-            detail = f"{label}: {type(exc).__name__}: {exc}"
-            log.warning("Email attempt failed, trying next option. %s", detail)
-            failures.append(detail)
-        except Exception as exc:  # recipient refused, message rejected, and so on
-            detail = f"{label}: {type(exc).__name__}: {exc}"
-            log.warning("Email attempt failed: %s", detail)
-            raise SendError("other", detail) from exc
-
-    raise SendError("network", " | ".join(failures))
-
-
-def _friendly_reason(exc: Exception) -> str:
-    if isinstance(exc, SendError):
-        if exc.kind == "auth":
-            return "SMTPAuthenticationError - the login was rejected; Gmail needs a 16-character App Password"
-        if exc.kind == "network":
-            return "connection failed on every port - the network or antivirus may be blocking email"
-        return exc.detail
-    return type(exc).__name__
-
-
-def deliver_code(channel: str, email: str, phone: str, username: str, code: str):
-    """Returns (really_delivered, note)."""
-    if channel == "Email" and email and smtp_configured():
-        try:
-            _send_email(email, username, code)
-            return True, f"A code was sent to {mask_email(email)}."
+            _send_brevo(to_addr, username, code)
+            return True, "sent through the Brevo API"
         except Exception as exc:
-            return False, f"The email could not be sent ({_friendly_reason(exc)}), so demo mode is used."
-    what = "email" if channel == "Email" else "SMS"
-    return False, f"Demo mode: no {what} service is connected, so the code is shown here instead of being sent."
+            errors.append(f"Brevo API: {type(exc).__name__} {str(exc)[:80]}")
+    if smtp_configured():
+        ports = [int(os.environ["SMTP_PORT"])] if os.environ.get("SMTP_PORT") else [587, 465]
+        if ports == [587]:
+            ports.append(465)
+        for port in ports:
+            try:
+                _send_smtp(to_addr, username, code, port)
+                return True, f"sent through SMTP port {port}"
+            except Exception as exc:
+                errors.append(f"SMTP {port}: {type(exc).__name__} {str(exc)[:80]}")
+    return False, " | ".join(errors) or "email is not set up"
 
 
-def _self_test() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    had_file = _load_env_file()
-    s = _settings()
-    print(".env file      :", f"read from {ENV_FILE}" if had_file else f"not found at {ENV_FILE} (optional)")
-    print("SMTP_HOST      :", s["host"] or "NOT SET")
-    print("SMTP_PORT      :", s["port"])
-    print("SMTP_USER      :", s["user"] or "NOT SET")
-    print("Password length:", len(s["password"]), "(a Gmail app password is 16)")
-    if not smtp_configured():
-        print("\nSet SMTP_HOST, SMTP_USER and SMTP_PASSWORD (terminal or .env), then run again.")
-        return 1
-    to_addr = sys.argv[1] if len(sys.argv) > 1 else s["user"]
-    print(f"\nSending a test email to {to_addr} ...")
-    try:
-        how = _send_email(to_addr, "tester", "123456")
-    except SendError as exc:
-        print("\nFAILED:", _friendly_reason(exc))
-        print("Details:", exc.detail)
-        return 1
-    print(f"\nSUCCESS using {how}. Check the inbox (and spam).")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(_self_test())
+def deliver_code(channel: str, email: str, phone: str, username: str, code: str) -> dict:
+    """Returns {"delivered": bool, "note": str, "show_code": bool}."""
+    if channel == "Email" and email:
+        if email_configured():
+            ok, detail = send_email(email, username, code)
+            if ok:
+                return {"delivered": True, "note": f"A code was sent to {mask_email(email)}.", "show_code": False}
+            return {"delivered": False, "show_code": allow_demo_fallback(),
+                    "note": f"The email could not be sent ({detail}). Run test_email.py to find the cause."}
+        return {"delivered": False, "show_code": True,
+                "note": "Demo mode: email is not set up, so the code is shown here instead of being sent."}
+    return {"delivered": False, "show_code": True,
+            "note": "Demo mode: no SMS service is connected, so the code is shown here instead of being sent."}

@@ -23,6 +23,7 @@ from src.metrics import (
     evaluate_detection_drop,
     generate_diff_visualization,
 )
+from src.optimizer import optimize_anchor_pattern
 from src.perturbation import anchor_mask, apply_anchor_perturbation, apply_perturbation
 
 CONDITION_ORDER = ["Ours", "JPEG only", "Random noise"]
@@ -100,6 +101,23 @@ def _annotate_original(rgb, result_face):
     return canvas
 
 
+def _shift_view(rgb, ref_face, cond_face, magnification=10):
+    """Green = original 5 key points, red = key points on the shielded photo (shift magnified)."""
+    h, w = rgb.shape[:2]
+    scale = max(1.0, 700.0 / max(h, w))
+    canvas = cv2.resize(rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+    ref5 = five_points(landmarks_to_array(ref_face, w, h)) * scale
+    if cond_face is None:
+        return canvas
+    cond5 = five_points(landmarks_to_array(cond_face, w, h)) * scale
+    for a, b in zip(ref5, cond5):
+        tip = a + (b - a) * magnification
+        cv2.line(canvas, tuple(int(v) for v in a), tuple(int(v) for v in tip), (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.circle(canvas, tuple(int(v) for v in a), 5, (0, 220, 0), -1, cv2.LINE_AA)
+        cv2.circle(canvas, tuple(int(v) for v in tip), 5, (255, 60, 60), -1, cv2.LINE_AA)
+    return canvas
+
+
 def _aligned_view(image, M, size=240):
     """Aligned 112x112 crop shown at `size` px (RGB). Black canvas if alignment was impossible."""
     if M is None:
@@ -115,7 +133,7 @@ def _aligned_view(image, M, size=240):
 # main entry point
 # ------------------------------------------------------------------
 def process_image(image, landmark_detector, face_detector, strength, jpeg_quality,
-                  max_side=None, with_baselines=True, with_visuals=True, seed=0, mode="rgb"):
+                  max_side=None, with_baselines=True, with_visuals=True, seed=0, mode="rgb", opt_iterations=25):
     clock = time.perf_counter
     t_start = clock()
     timings = {}
@@ -133,7 +151,8 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
     mask, mask_overlay = create_landmark_mask(image, ref_face)
 
     t = clock()
-    if mode == "anchors":
+    opt_history = None
+    if mode in ("anchors", "optimized"):
         # same energy as the face-wide brightness pattern, but only on 7 anchor points
         _, ref_delta = apply_perturbation(image, mask, strength=strength, mode="luminance")
         all_pts = landmarks_to_array(ref_face, w, h)
@@ -143,8 +162,18 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
         red = np.zeros_like(image, dtype=np.float32)
         red[:, :, 2] = 255.0
         mask_overlay = (image.astype(np.float32) * (1.0 - 0.35 * alpha) + red * 0.35 * alpha).astype(np.uint8)
-        raw_protected, delta = apply_anchor_perturbation(
-            image, anchors, float(np.mean(ref_delta.astype(np.float64) ** 2)))
+        target_energy = float(np.mean(ref_delta.astype(np.float64) ** 2))
+        if mode == "anchors":
+            raw_protected, delta = apply_anchor_perturbation(image, anchors, target_energy)
+        else:
+            t_opt = clock()
+            delta_opt, opt_history = optimize_anchor_pattern(
+                image, ref_face, lambda bgr: _detect(landmark_detector, bgr),
+                mask.astype(np.float32) / 255.0, target_energy, jpeg_quality,
+                iterations=opt_iterations, seed=seed)
+            raw_protected = np.clip(image.astype(np.float32) + delta_opt, 0, 255).astype(np.uint8)
+            delta = raw_protected.astype(np.float32) - image.astype(np.float32)
+            timings["Optimization search"] = clock() - t_opt
     else:
         raw_protected, delta = apply_perturbation(image, mask, strength=strength, mode=mode)
     protected, buf = jpeg_roundtrip(raw_protected, jpeg_quality)
@@ -186,6 +215,7 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
         "det_metrics": det_metrics,
         "encoded_buf": buf,
         "crypto_hash": hashlib.sha256(buf.tobytes()).hexdigest().upper(),
+        "opt_history": opt_history,
         "arrays": {"image": image, "raw_protected": raw_protected, "protected": protected,
                    "mask": mask, "ref_face": ref_face},
     }
@@ -223,7 +253,9 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
             "aligned_orig": a_orig,
             "aligned_prot": a_prot,
             "aligned_diff": a_diff,
+            "shift_view": _shift_view(rgb, ref_face, prot_face, 10),
         }
+        result["shift_magnification"] = 10
         timings["Visuals"] = clock() - t
 
     timings["Total"] = clock() - t_start

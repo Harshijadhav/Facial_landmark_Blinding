@@ -5,7 +5,7 @@ post-processing a platform might apply (re-compression, resize, blur).
 """
 
 import cv2
-import numpy as np
+import numpy as np 
 import pandas as pd
 
 from src.alignment import measure_alignment
@@ -28,7 +28,7 @@ def _detect(landmark_detector, bgr):
 
 
 def evaluate_images(items, landmark_detector, face_detector, strength, jpeg_quality,
-                    max_side=None, robustness=True, progress=None, mode="rgb"):
+                    max_side=None, robustness=True, progress=None, mode="rgb", opt_iterations=25):
     """
     items: list of (name, BGR image).
     Returns (per_image_df, robustness_df, skipped_names).
@@ -40,7 +40,8 @@ def evaluate_images(items, landmark_detector, face_detector, strength, jpeg_qual
             progress(i, len(items), name)
 
         res = process_image(bgr, landmark_detector, face_detector, strength, jpeg_quality,
-                            max_side=max_side, with_baselines=True, with_visuals=False, mode=mode)
+                            max_side=max_side, with_baselines=True, with_visuals=False, mode=mode,
+                            opt_iterations=opt_iterations)
         if not res["face_found"]:
             skipped.append(name)
             continue

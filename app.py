@@ -1,3 +1,4 @@
+import hashlib
 import os
 
 import cv2
@@ -5,7 +6,7 @@ import numpy as np
 import streamlit as st
 
 # Database, auth and vision modules
-from database import init_db, log_audit_trail, get_user_audit_history
+from database import find_audit_entry, get_user_audit_history, init_db, log_audit_trail
 from auth_ui import render_auth_gateway
 from src.detector import FaceDetector
 from src.landmarks import LandmarkDetector
@@ -40,6 +41,7 @@ MODE_OPTIONS = {
     "Colour pattern (original)": "rgb",
     "Brightness only (as in synopsis)": "luminance",
     "Anchor-targeted (same energy, on key points)": "anchors",
+    "Auto-tuned for this photo (searches for a better pattern)": "optimized",
 }
 DISPLAY_NAMES = {
     "Ours": "Our perturbation",
@@ -176,6 +178,13 @@ def render_results(cache, stale):
     )
     st.caption("If the perturbation is not clearly above both controls, the pattern is doing nothing special.")
 
+    hist = cache.get("opt_history")
+    if hist:
+        st.markdown('<div class="section-title">Search progress</div>', unsafe_allow_html=True)
+        st.line_chart({"Best key-point error found so far (% of eye distance)": [100.0 * v for v in hist]})
+        st.caption(f"The search tried {len(hist)} steps and kept the best pattern, at the same energy and the same "
+                   "quality as the fixed pattern. A rising line means it found a pattern that moves the key points more.")
+
     c1, c2 = st.columns(2)
     with c1:
         with st.container(border=True):
@@ -267,6 +276,12 @@ def render_stress(cache):
     k3.metric("Scale change", num(ours["scale_ratio"], 3, " x"))
     k4.metric("Crop similarity (SSIM)", num(cache["aligned_ssim"], 3))
 
+    st.markdown('<div class="section-title">Where the key points moved</div>', unsafe_allow_html=True)
+    st.image(imgs["shift_view"], width="stretch")
+    st.caption("Green dots: the 5 alignment points on the original photo. Red dots: the same points found on the "
+               f"shielded photo, each shift magnified {cache.get('shift_magnification', 10)} times so it can be seen. "
+               "A line joins each pair.")
+
 
 def render_audit():
     st.caption("Your last 5 runs, stored in the local users.db file with a SHA-256 fingerprint of each output.")
@@ -286,12 +301,59 @@ def render_audit():
     else:
         message_card("No runs recorded yet", "Every defense run is logged here automatically.")
 
+    st.markdown('<div class="section-title">Verify a file</div>', unsafe_allow_html=True)
+    st.caption("Choose a protected image you downloaded earlier. The app recomputes its SHA-256 fingerprint "
+               "and looks for it in your audit log.")
+    checked = st.file_uploader("File to verify", key="verify_file", label_visibility="collapsed")
+    if checked is not None:
+        digest = hashlib.sha256(checked.getvalue()).hexdigest().upper()
+        entry = find_audit_entry(st.session_state.user["user_id"], digest[:16])
+        if entry:
+            st.success(f"Match. This exact file was produced by your account on {str(entry['timestamp'])[:19]} "
+                       f"(PSNR {entry['psnr']:.2f} dB, SSIM {entry['ssim']:.4f}, result "
+                       f"{LEVEL_LABEL.get(entry['defense_status'], entry['defense_status'])}). Fingerprint {digest[:16]}.")
+        else:
+            st.error("No match. This file was not produced by your account's runs, or it has been changed since "
+                     "(even re-saving or re-compressing changes the fingerprint).")
+
 
 def _read_image_bytes(data: bytes):
     return cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
-def render_evaluation(strength, jpeg_quality, max_side, mode, *_):
+ALLOWED_EXT = (".jpg", ".jpeg", ".png")
+
+
+def check_upload(uploaded):
+    """Returns (problem, image). problem is (title, message) or None."""
+    name = uploaded.name
+    ext = os.path.splitext(name)[1].lower() or "no extension"
+    if ext not in ALLOWED_EXT:
+        return ("This is not a JPG or PNG photo",
+                f"'{name}' is a {ext} file. Please choose a JPG or PNG picture of a face."), None
+    img = _read_image_bytes(uploaded.getvalue())
+    if img is None:
+        return ("The photo can't be opened",
+                f"'{name}' looks damaged, or it is not a real image. Please try another JPG or PNG."), None
+    if min(img.shape[:2]) < 100:
+        return ("The photo is too small",
+                f"The shortest side is only {min(img.shape[:2])} px. Please use a photo at least 100 px wide and high, "
+                "with the face clearly visible."), None
+    return None, img
+
+
+@st.dialog("Please check your photo")
+def _upload_dialog(title, message):
+    st.markdown(f"**{title}**")
+    st.write(message)
+    if st.button("Choose another photo", type="primary", width="stretch"):
+        st.session_state.uploader_key += 1
+        st.session_state.defense_cache = None
+        st.session_state.last_processed_file = None
+        st.rerun()
+
+
+def render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps=25, *_):
     from src.alignment import FAIL_NME, PARTIAL_NME
 
     st.caption("Runs the defense on many photos and compares it with two controls: JPEG only and random noise.")
@@ -334,7 +396,8 @@ def render_evaluation(strength, jpeg_quality, max_side, mode, *_):
 
             per_image, robust, skipped = evaluate_images(
                 items, landmark_detector, face_detector, strength, jpeg_quality,
-                max_side=max_side, robustness=with_rob, progress=on_progress, mode=mode)
+                max_side=max_side, robustness=with_rob, progress=on_progress, mode=mode,
+                opt_iterations=opt_steps)
             bar.empty()
             st.session_state.eval_result = {
                 "per_image": per_image, "robust": robust, "skipped": skipped, "n": len(items),
@@ -507,11 +570,19 @@ mode_label = st.sidebar.selectbox(
     help="Colour pattern: the original pattern, which shifts the colour channels slightly. Brightness only: the same pattern added to brightness, as in the synopsis. Compare them in the Evaluation tab.",
 )
 mode = MODE_OPTIONS[mode_label]
+opt_steps = 25
+if mode == "optimized":
+    opt_steps = st.sidebar.slider(
+        "Search steps", 5, 60, 25,
+        help="How many rounds the search runs. More steps can find a stronger pattern but take longer "
+             "(about a second or two per step).")
 
 # ---- Sidebar: Upload ----
 st.sidebar.markdown('<div class="side-title">Portrait</div>', unsafe_allow_html=True)
+st.session_state.setdefault("uploader_key", 0)
 uploaded_file = st.sidebar.file_uploader(
-    "Upload a portrait (JPG or PNG)", type=["jpg", "jpeg", "png"], label_visibility="collapsed"
+    "Upload a portrait (JPG or PNG)", label_visibility="collapsed",
+    key=f"portrait_{st.session_state.uploader_key}",
 )
 
 # ---- Page header ----
@@ -525,16 +596,17 @@ st.markdown(
 
 cache = None
 stale = False
-decode_failed = False
+upload_problem = None
 
 if uploaded_file is None:
     st.session_state.defense_cache = None
     st.session_state.last_processed_file = None
 else:
-    image = _read_image_bytes(uploaded_file.getvalue())
-    if image is None:
-        decode_failed = True
+    problem, image = check_upload(uploaded_file)
+    if problem:
+        upload_problem = problem
         st.session_state.defense_cache = None
+        st.session_state.last_processed_file = None
     else:
         # Invalidate the cache when a different image is uploaded
         file_sig = f"{uploaded_file.name}_{uploaded_file.size}"
@@ -543,13 +615,13 @@ else:
             st.session_state.last_processed_file = file_sig
 
         trigger_defense = st.sidebar.button("Run blinding defense", type="primary", width="stretch")
-        params = (file_sig, round(float(strength), 3), int(jpeg_quality), max_side, mode)
+        params = (file_sig, round(float(strength), 3), int(jpeg_quality), max_side, mode, opt_steps)
 
         # Heavy computation runs once (first upload) or when the Run button is pressed
         if trigger_defense or st.session_state.defense_cache is None:
             with st.spinner("Running the defense and measuring the result..."):
                 result = process_image(image, landmark_detector, face_detector, strength, jpeg_quality,
-                                       max_side=max_side, mode=mode)
+                                       max_side=max_side, mode=mode, opt_iterations=opt_steps)
             result["params"] = params
             st.session_state.defense_cache = result
 
@@ -567,8 +639,12 @@ else:
         cache = st.session_state.defense_cache
         stale = cache["params"] != params
 
-if decode_failed:
-    st.error("This file could not be read as an image. Try another JPG or PNG.")
+if upload_problem is None and cache is not None and not cache.get("face_found", True):
+    upload_problem = ("No face found",
+                      "The app could not find a face in this photo. Use a clear, front-facing photo of one person, "
+                      "in good light, with the face filling a good part of the picture.")
+if upload_problem:
+    _upload_dialog(*upload_problem)
 
 has_result = cache is not None and cache.get("face_found", False)
 
@@ -610,4 +686,4 @@ with tab3:
 with tab4:
     render_audit()
 with tab5:
-    render_evaluation(strength, jpeg_quality, max_side, mode)
+    render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps)

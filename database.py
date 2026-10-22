@@ -401,6 +401,18 @@ def log_audit_trail(user_id, image_hash, psnr, ssim, status):
     conn.close()
 
 
+def find_audit_entry(user_id, hash16):
+    """The audit-log row of this user whose fingerprint equals hash16, or None."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT timestamp, image_hash, psnr, ssim, defense_status FROM audit_logs "
+        "WHERE user_id = ? AND image_hash = ? ORDER BY log_id DESC LIMIT 1",
+        (user_id, hash16.upper()),
+    ).fetchone()
+    conn.close()
+    return row
+
+
 def get_user_audit_history(user_id):
     conn = get_connection()
     cursor = conn.cursor()

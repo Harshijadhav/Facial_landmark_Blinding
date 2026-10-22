@@ -1,0 +1,431 @@
+/* Dark Academic / Cyber-Forensic Theme
+   Palette: bg #0b0f19 | surface #161b26 | border #30363d | text #e6edf3
+   Accent (defense): #388bfd / #58a6ff | status: green #3fb950, red #f85149 */
+
+.stApp {
+    background-color: #0b0f19;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Layout: tighter top gap, readable width */
+.block-container {
+    padding-top: 2.2rem;
+    max-width: 1200px;
+}
+
+/* Headings */
+h1 { font-weight: 700; letter-spacing: -0.01em; }
+h2, h3 { font-weight: 600; color: #e6edf3; }
+hr { border-color: #30363d !important; }
+
+/* Section cards (briefing page) */
+.cyber-card {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.cyber-card h3 { margin-top: 0; font-size: 1.15rem; }
+.cyber-card li { margin-bottom: 6px; line-height: 1.55; }
+
+.alert-callout {
+    background: rgba(248, 81, 73, 0.1);
+    border-left: 4px solid #f85149;
+    padding: 16px 20px;
+    border-radius: 4px 8px 8px 4px;
+    margin: 15px 0;
+}
+
+.shield-callout {
+    background: rgba(56, 139, 253, 0.1);
+    border-left: 4px solid #388bfd;
+    padding: 16px 20px;
+    border-radius: 4px 8px 8px 4px;
+    margin: 15px 0;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #0f1420;
+    border-right: 1px solid #30363d;
+}
+section[data-testid="stSidebar"] h2 { font-size: 1.05rem; }
+
+/* Tabs */
+button[data-baseweb="tab"] {
+    padding: 10px 16px;
+    font-weight: 500;
+    color: #8b949e;
+}
+button[data-baseweb="tab"][aria-selected="true"] { color: #e6edf3; }
+div[data-baseweb="tab-highlight"] { background-color: #388bfd !important; }
+div[data-baseweb="tab-border"] { background-color: #30363d !important; }
+
+/* Metric boxes as cards */
+div[data-testid="stMetric"] {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 14px 18px;
+}
+div[data-testid="stMetricLabel"] { color: #8b949e; }
+div[data-testid="stMetricValue"] {
+    font-size: 1.8rem !important;
+    font-weight: 700;
+    color: #58a6ff;
+}
+
+/* Images: one consistent frame */
+div[data-testid="stImage"] img {
+    border: 1px solid #30363d;
+    border-radius: 8px;
+}
+
+/* Alerts (st.info / success / warning / error) */
+div[data-testid="stAlert"] {
+    border-radius: 8px;
+    border: 1px solid #30363d;
+}
+
+/* Forms (login, reset): card look */
+div[data-testid="stForm"] {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 22px;
+}
+div[data-testid="InputInstructions"] { display: none; }
+
+/* Inputs */
+div[data-baseweb="input"] > div,
+div[data-baseweb="base-input"] {
+    background-color: #0b0f19 !important;
+    border-color: #30363d !important;
+    border-radius: 6px;
+}
+div[data-baseweb="input"]:focus-within > div {
+    border-color: #388bfd !important;
+}
+
+/* Buttons */
+.stButton > button,
+.stDownloadButton > button,
+button[data-testid="stBaseButton-secondaryFormSubmit"] {
+    border-radius: 6px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    border-color: #388bfd;
+    color: #58a6ff;
+}
+button[kind="primary"],
+button[kind="primaryFormSubmit"] {
+    background-color: #1f6feb;
+    border-color: #1f6feb;
+    color: #ffffff;
+}
+button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover {
+    background-color: #388bfd;
+    border-color: #388bfd;
+    color: #ffffff;
+}
+
+/* Recovery code / code blocks */
+div[data-testid="stCode"] pre {
+    font-size: 1.15rem;
+    letter-spacing: 0.08em;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+}
+
+/* Audit table */
+div[data-testid="stTable"] table {
+    border: 1px solid #30363d;
+    border-radius: 8px;
+}
+div[data-testid="stTable"] th {
+    background: #161b26;
+    color: #8b949e;
+}
+
+
+/* ================= PAGE 1: BRIEFING ================= */
+.hero { padding: 8px 0 18px 0; }
+.hero-title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+}
+.hero-sub {
+    margin-top: 8px;
+    max-width: 62ch;
+    font-size: 1.05rem;
+    line-height: 1.55;
+    color: #8b949e;
+}
+
+.section-title {
+    margin: 30px 0 12px 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #e6edf3;
+}
+
+.step-card {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 20px 22px;
+    min-height: 190px;
+}
+.step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(56, 139, 253, 0.15);
+    border: 1px solid #388bfd;
+    color: #58a6ff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 10px;
+}
+.step-title { font-weight: 600; font-size: 1.05rem; margin-bottom: 6px; }
+.step-body { color: #9da7b3; line-height: 1.55; font-size: 0.95rem; }
+
+.shield-callout ul, .alert-callout ul { margin: 10px 0 0 0; padding-left: 20px; }
+.shield-callout li, .alert-callout li { margin-bottom: 6px; line-height: 1.55; }
+
+.help-card {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 22px;
+    text-align: center;
+    min-height: 170px;
+}
+.help-number {
+    font-size: 3rem;
+    font-weight: 700;
+    color: #58a6ff;
+    line-height: 1.1;
+}
+.help-label { color: #9da7b3; margin: 4px 0 10px 0; }
+.help-card a { color: #58a6ff; text-decoration: none; font-weight: 600; }
+.help-card a:hover { text-decoration: underline; }
+
+/* ================= STUDIO PAGES ================= */
+.side-title {
+    margin: 18px 0 6px 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e6edf3;
+}
+
+/* Panel headers inside bordered containers */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: #161b26;
+    border-color: #30363d !important;
+    border-radius: 10px;
+}
+.panel-title { font-weight: 600; font-size: 1rem; }
+.panel-sub { color: #8b949e; font-size: 0.85rem; margin-bottom: 10px; line-height: 1.4; }
+
+/* Status banners */
+.status-banner {
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 4px 0 16px 0;
+    line-height: 1.5;
+}
+.banner-ok   { background: rgba(63, 185, 80, 0.12);  border-left: 4px solid #3fb950; }
+.banner-warn { background: rgba(210, 153, 34, 0.12); border-left: 4px solid #d29922; }
+.banner-bad  { background: rgba(248, 81, 73, 0.12);  border-left: 4px solid #f85149; }
+
+/* Pass / fail badges */
+.badge {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.badge-ok  { background: rgba(63, 185, 80, 0.15);  color: #3fb950; border: 1px solid #3fb950; }
+.badge-bad { background: rgba(248, 81, 73, 0.15);  color: #f85149; border: 1px solid #f85149; }
+
+/* Empty states and explainer cards */
+.empty-card, .explain-card {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 22px 24px;
+}
+.empty-title { font-weight: 600; font-size: 1.1rem; margin-bottom: 6px; }
+.empty-body  { color: #9da7b3; line-height: 1.55; max-width: 70ch; }
+
+/* Center the small stress-test images inside their panels */
+div[data-testid="stImage"] { display: flex; justify-content: center; }
+
+
+/* ================= INPUT VISIBILITY + DIALOG ================= */
+div[data-baseweb="input"] {
+    background-color: #202838 !important;
+    border: 1px solid #4a5568 !important;
+    border-radius: 6px !important;
+}
+div[data-baseweb="input"] > div,
+div[data-baseweb="base-input"] {
+    background-color: transparent !important;
+    border: none !important;
+}
+div[data-baseweb="input"] input {
+    color: #e6edf3 !important;
+    -webkit-text-fill-color: #e6edf3 !important;
+}
+div[data-baseweb="input"] input::placeholder { color: #6e7a8a !important; }
+div[data-baseweb="input"]:focus-within {
+    border-color: #388bfd !important;
+    box-shadow: 0 0 0 1px #388bfd;
+}
+
+/* Popup: blurred backdrop */
+div[data-testid="stDialog"] {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    background: rgba(5, 8, 15, 0.55);
+}
+div[data-testid="stDialog"] div[role="dialog"] {
+    background: #161b26;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+}
+
+/* ================= SEGMENTED NAV (studio tabs) ================= */
+div[data-baseweb="tab-list"] {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 18px;
+    background: #10151f;
+    border: 1px solid #30363d;
+    border-radius: 14px;
+    overflow: visible !important;
+}
+div[data-baseweb="tab-highlight"],
+div[data-baseweb="tab-border"] { display: none !important; }
+
+button[data-baseweb="tab"] {
+    flex: 1 1 0;
+    justify-content: center;
+    height: auto;
+    padding: 11px 14px !important;
+    background: transparent;
+    border: none !important;
+    border-radius: 10px;
+    color: #9da7b3;
+    transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+}
+button[data-baseweb="tab"] p {
+    margin: 0;
+    font-weight: 600;
+    color: inherit;
+}
+button[data-baseweb="tab"]:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e6edf3;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
+    color: #ffffff;
+    box-shadow: 0 4px 16px rgba(31, 111, 235, 0.4);
+}
+
+@media (max-width: 700px) {
+    div[data-baseweb="tab-list"] { flex-wrap: wrap; }
+    button[data-baseweb="tab"] { flex: 1 1 45%; }
+}
+
+/* ================= ACCOUNT FORMS (register, reset, terms) ================= */
+
+/* Terms box: readable, bordered, scrolls inside its own frame */
+div[data-testid="stVerticalBlockBorderWrapper"] p,
+div[data-testid="stVerticalBlockBorderWrapper"] li {
+    line-height: 1.55;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] li { margin-bottom: 4px; }
+
+/* Field labels and helper captions */
+label[data-testid="stWidgetLabel"] p {
+    font-weight: 600;
+    font-size: 0.92rem;
+}
+div[data-testid="stCaptionContainer"] {
+    color: #8b949e;
+    margin-top: -6px;
+    margin-bottom: 10px;
+}
+
+/* Placeholders (XXXXXXXXXX, name@example.com) a little clearer */
+div[data-baseweb="input"] input::placeholder { color: #7d8a9a !important; opacity: 1; }
+
+/* Checkbox accent */
+label[data-baseweb="checkbox"] span[role="checkbox"][aria-checked="true"],
+label[data-baseweb="checkbox"] > span:first-child {
+    border-color: #388bfd;
+}
+
+/* Radio (send the code to: Email / Phone number) */
+div[role="radiogroup"] { gap: 14px; }
+
+/* Disabled buttons look disabled, not just dimmed blue */
+button:disabled,
+button[disabled] {
+    background: #1b2130 !important;
+    border: 1px solid #30363d !important;
+    color: #6e7a8a !important;
+    cursor: not-allowed;
+    box-shadow: none !important;
+}
+
+/* Tertiary links (Back to login, Send a new code) */
+button[kind="tertiary"] {
+    color: #58a6ff;
+    padding-left: 0;
+}
+button[kind="tertiary"]:hover { text-decoration: underline; }
+
+/* Popup (password and field errors) */
+div[data-testid="stDialog"] div[role="dialog"] ul { padding-left: 20px; }
+div[data-testid="stDialog"] div[role="dialog"] li { margin-bottom: 6px; }
+
+/* ================= BROWSER EYE ICON REMOVAL & LAYOUT FIXES ================= */
+
+/* Remove browser-native reveal password eye and clear buttons in Edge/Windows */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+    display: none !important;
+}
+
+/* Prevent horizontal table text-clipping */
+div[data-testid="stDataFrame"] {
+    width: 100% !important;
+}
+
+/* Ensure dialog error text highlights are bold and prominent */
+div[data-testid="stDialog"] b,
+div[data-testid="stDialog"] strong {
+    color: #58a6ff !important;
+    font-weight: 700 !important;
+}  

@@ -1,22 +1,7 @@
-# Python virtual environment
 venv/
-env/
-ENV/
-
-# Python execution cache
 __pycache__/
 *.pyc
-
-# Local SQLite databases (holds user account hashes)
-*.db
 users.db
-
-# Secrets & environment configurations
 .env
-*.env
-.streamlit/secrets.toml
-
-# Heavy test inputs/backups
-backup_14oct/
-data/input/
-data/output/ 
+data/
+results/

@@ -298,14 +298,21 @@ def _forgot():
                         st.warning(f"Please wait {res['wait']} seconds before asking for another code.")
                     else:
                         st.session_state.reset_demo = None
+                        send_failed = None
                         if res and "code" in res:
-                            delivered, note = deliver_code(channel, res["email"], res["phone"],
-                                                           res["username"], res["code"])
-                            if not delivered:
-                                st.session_state.reset_demo = {"code": res["code"], "note": note}
-                        st.session_state.reset_identifier = identifier.strip()
-                        st.session_state.reset_stage = "verify"
-                        st.rerun()
+                            info = deliver_code(channel, res["email"], res["phone"],
+                                                res["username"], res["code"])
+                            if not info["delivered"]:
+                                if info["show_code"]:
+                                    st.session_state.reset_demo = {"code": res["code"], "note": info["note"]}
+                                else:
+                                    send_failed = info["note"]
+                        if send_failed:
+                            st.error(send_failed)
+                        else:
+                            st.session_state.reset_identifier = identifier.strip()
+                            st.session_state.reset_stage = "verify"
+                            st.rerun()
         else:
             st.info(f"If an account matches, a 6-digit code has been sent to its registered "
                     f"{'email or phone' }. It expires in {RESET_CODE_MINUTES} minutes.")
