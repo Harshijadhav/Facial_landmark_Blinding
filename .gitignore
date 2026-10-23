@@ -4,4 +4,6 @@ __pycache__/
 users.db
 .env
 data/
-results/
+.env
+backup_14oct/
+backup_*.zip

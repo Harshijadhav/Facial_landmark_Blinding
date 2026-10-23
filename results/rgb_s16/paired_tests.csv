@@ -1,0 +1,3 @@
+Comparison,Mean difference (points of % eye dist),Ours larger in,p-value (Wilcoxon),Verdict
+Ours vs JPEG only,0.187,19 of 28 images,0.0103,Ours is higher (p < 0.05)
+Ours vs Random noise,0.039,17 of 28 images,0.3502,No clear difference

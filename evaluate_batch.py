@@ -41,6 +41,8 @@ def main(argv=None):
     ap.add_argument("--mode", choices=["rgb", "luminance", "anchors", "optimized", "both", "all"], default="rgb")
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--opt-iters", type=int, default=25, help="search steps for --mode optimized")
+    ap.add_argument("--auto", action="store_true",
+                    help="choose each photo's strength automatically so the exported file meets PSNR 38 / SSIM 0.96")
     ap.add_argument("--robustness", action="store_true", help="also run the post-processing tests (slower)")
     args = ap.parse_args(argv)
 
@@ -53,7 +55,7 @@ def main(argv=None):
         raise SystemExit(f"No images found in {args.input}")
     print(f"Loaded {len(items)} images from {args.input}")
 
-    strengths = args.sweep if args.sweep else [args.strength]
+    strengths = ["auto"] if args.auto else (args.sweep if args.sweep else [args.strength])
     modes = {"both": ["rgb", "luminance"], "all": ["rgb", "luminance", "anchors"]}.get(args.mode, [args.mode])
     max_side = args.max_side or None
     os.makedirs(args.out, exist_ok=True)
@@ -61,16 +63,18 @@ def main(argv=None):
     sweep_rows = []
     for mode in modes:
         for s in strengths:
-            tag = f"{mode}_s{int(round(s))}"
-            print(f"\n=== pattern: {MODES[mode]} | strength {s:g}% | JPEG {args.jpeg} ===")
+            is_auto = s == "auto"
+            tag = f"{mode}_auto" if is_auto else f"{mode}_s{int(round(s))}"
+            label = "automatic (quality-targeted)" if is_auto else f"{s:g}%"
+            print(f"\n=== pattern: {MODES[mode]} | strength {label} | platform JPEG {args.jpeg} ===")
 
             def progress(i, n, name):
                 print(f"\r  image {min(i + 1, n)} of {n}", end="", flush=True)
 
             per_image, robust, skipped = evaluate_images(
-                items, landmark_detector, face_detector, s / 100.0, args.jpeg,
+                items, landmark_detector, face_detector, 0.08 if is_auto else s / 100.0, args.jpeg,
                 max_side=max_side, robustness=args.robustness, progress=progress, mode=mode,
-                opt_iterations=args.opt_iters)
+                opt_iterations=args.opt_iters, auto_strength=is_auto)
             print()
             summary = summarize_conditions(per_image)
             tests = paired_tests(per_image)
@@ -91,12 +95,16 @@ def main(argv=None):
                 by = summary.set_index("Condition")
                 ours = by.loc["Ours"]
                 row = {
-                    "Pattern": MODES[mode], "Strength %": s, "Images": int(ours["Images"]),
+                    "Pattern": MODES[mode],
+                    "Strength %": float(ours["Mean strength (%)"]) if is_auto else s,
+                    "Images": int(ours["Images"]),
                     "Ours error %": ours["Mean key-point error (% eye dist)"],
                     "JPEG only error %": by.loc["JPEG only", "Mean key-point error (% eye dist)"] if "JPEG only" in by.index else np.nan,
                     "Noise error %": by.loc["Random noise", "Mean key-point error (% eye dist)"] if "Random noise" in by.index else np.nan,
                     "Ours PSNR dB": ours["Mean PSNR (dB)"], "Ours SSIM": ours["Mean SSIM"],
+                    "PSNR after platform dB": ours["PSNR after platform (dB)"],
                     "Ours disrupted %": ours["Disrupted (%)"],
+                    "Quality met %": ours["Quality target met (%)"],
                 }
                 if not tests.empty:
                     t = tests[tests["Comparison"] == "Ours vs Random noise"]

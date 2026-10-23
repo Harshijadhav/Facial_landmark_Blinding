@@ -40,7 +40,8 @@ def _jpeg(image, quality):
 
 
 def optimize_anchor_pattern(image, ref_face, detect, window, target_energy, jpeg_quality,
-                            iterations=25, pairs=8, sigma=0.5, step=0.6, seed=0, on_step=None):
+                            iterations=25, pairs=8, sigma=0.5, step=0.6, seed=0, on_step=None,
+                            export_quality=None):
     """
     image: BGR uint8. ref_face: landmarks of the clean image. detect(bgr) -> landmarks or None.
     window: float32 mask 0..1 (anchor windows). Returns (delta, history), where history[i] is the
@@ -54,7 +55,10 @@ def optimize_anchor_pattern(image, ref_face, detect, window, target_energy, jpeg
 
     def score(z):
         delta = make_delta(z, window, target_energy)
-        candidate = _jpeg(np.clip(base + delta, 0, 255).astype(np.uint8), jpeg_quality)
+        exported = np.clip(base + delta, 0, 255).astype(np.uint8)
+        if export_quality:
+            exported = _jpeg(exported, export_quality)
+        candidate = _jpeg(exported, jpeg_quality)
         face = detect(candidate)
         if face is None:
             return LOST_REWARD

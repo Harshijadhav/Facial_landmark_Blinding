@@ -5,7 +5,7 @@ post-processing a platform might apply (re-compression, resize, blur).
 """
 
 import cv2
-import numpy as np 
+import numpy as np
 import pandas as pd
 
 from src.alignment import measure_alignment
@@ -20,7 +20,8 @@ TRANSFORMS = {
 }
 
 _COLUMNS = ["image", "condition", "found", "landmarks_found", "nme_5pt", "nme_all",
-            "canonical_shift_px", "angle_err_deg", "psnr", "ssim", "psnr_masked", "level"]
+            "canonical_shift_px", "angle_err_deg", "psnr", "ssim", "psnr_masked", "level",
+            "psnr_platform", "ssim_platform", "strength_used", "quality_ok"]
 
 
 def _detect(landmark_detector, bgr):
@@ -28,7 +29,7 @@ def _detect(landmark_detector, bgr):
 
 
 def evaluate_images(items, landmark_detector, face_detector, strength, jpeg_quality,
-                    max_side=None, robustness=True, progress=None, mode="rgb", opt_iterations=25):
+                    max_side=None, robustness=True, progress=None, mode="rgb", opt_iterations=25, auto_strength=False):
     """
     items: list of (name, BGR image).
     Returns (per_image_df, robustness_df, skipped_names).
@@ -41,14 +42,17 @@ def evaluate_images(items, landmark_detector, face_detector, strength, jpeg_qual
 
         res = process_image(bgr, landmark_detector, face_detector, strength, jpeg_quality,
                             max_side=max_side, with_baselines=True, with_visuals=False, mode=mode,
-                            opt_iterations=opt_iterations)
+                            opt_iterations=opt_iterations, auto_strength=auto_strength)
         if not res["face_found"]:
             skipped.append(name)
             continue
 
         for cond in CONDITION_ORDER:
             m = res["conditions"][cond]
-            rows.append({"image": name, "condition": cond, **{k: m[k] for k in _COLUMNS[2:]}})
+            rows.append({"image": name, "condition": cond,
+                         **{k: m[k] for k in _COLUMNS[2:-2] if k in m},
+                         "strength_used": res["strength_used"],
+                         "quality_ok": bool(m["psnr"] >= 38.0 and m["ssim"] >= 0.96)})
 
         if robustness:
             arrays = res["arrays"]
@@ -90,6 +94,9 @@ def summarize_conditions(df):
             "Mean PSNR (dB)": round(float(d["psnr"].replace([np.inf], np.nan).mean()), 2),
             "Mean PSNR in face region (dB)": round(float(d["psnr_masked"].replace([np.inf], np.nan).mean()), 2),
             "Mean SSIM": round(float(d["ssim"].mean()), 4),
+            "Quality target met (%)": round(100.0 * float(d["quality_ok"].mean()), 1),
+            "Mean strength (%)": round(100.0 * float(d["strength_used"].mean()), 1),
+            "PSNR after platform (dB)": round(float(d["psnr_platform"].replace([np.inf], np.nan).mean()), 2),
         })
     return pd.DataFrame(out)
 

@@ -5,6 +5,8 @@ from skimage.metrics import structural_similarity as ssim
 
 
 def calculate_psnr(original, protected):
+    if np.array_equal(original, protected):
+        return float("inf")
     return float(psnr(original, protected, data_range=255))
 
 

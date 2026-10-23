@@ -38,10 +38,8 @@ face_detector, landmark_detector = load_vision_engines()
 
 SIZE_OPTIONS = {"Fast (1024 px)": 1024, "Balanced (1280 px)": 1280, "Full resolution": None}
 MODE_OPTIONS = {
-    "Colour pattern (original)": "rgb",
-    "Brightness only (as in synopsis)": "luminance",
-    "Anchor-targeted (same energy, on key points)": "anchors",
-    "Auto-tuned for this photo (searches for a better pattern)": "optimized",
+    "Anchor-targeted (recommended)": "anchors",
+    "Auto-tuned for this photo (search)": "optimized",
 }
 DISPLAY_NAMES = {
     "Ours": "Our perturbation",
@@ -149,6 +147,22 @@ def render_results(cache, stale):
     level_banner(cache)
 
     ours, conds, imgs = cache["ours"], cache["conditions"], cache["images"]
+    how = "chosen automatically" if cache["auto_strength"] else "set by you"
+    if cache["auto_strength"] and cache["calibration_reached"] is False:
+        q_cls = "banner-warn"
+        q_text = ("<b>Quality target cannot be reached on this photo.</b> Even the weakest pattern leaves the "
+                  f"exported file at PSNR {ours['psnr']:.2f} dB or SSIM {ours['ssim']:.4f}, below the targets "
+                  "(38 dB, 0.96).")
+    elif cache["quality_ok"]:
+        q_cls = "banner-ok"
+        q_text = (f"<b>Quality target met.</b> Exported file: PSNR {ours['psnr']:.2f} dB (target 38) and "
+                  f"SSIM {ours['ssim']:.4f} (target 0.96). Strength used: {cache['strength_used'] * 100:.1f}% ({how}). "
+                  f"After a platform re-compresses it: PSNR {ours['psnr_platform']:.2f} dB, SSIM {ours['ssim_platform']:.4f}.")
+    else:
+        q_cls = "banner-warn"
+        q_text = (f"<b>Quality target not met.</b> Exported file: PSNR {ours['psnr']:.2f} dB, SSIM {ours['ssim']:.4f}. "
+                  "Lower the strength or turn on automatic strength.")
+    st.markdown(f'<div class="status-banner {q_cls}">{q_text}</div>', unsafe_allow_html=True)
     ctrl = conds.get("JPEG only")
 
     m1, m2, m3 = st.columns(3)
@@ -169,7 +183,8 @@ def render_results(cache, stale):
                 "Condition": DISPLAY_NAMES[name],
                 "Key-point error (% eye dist)": "lost" if c["nme_5pt"] is None else f"{c['nme_5pt'] * 100:.2f}",
                 "Alignment shift (px)": num(c["canonical_shift_px"]),
-                "PSNR (dB)": num(c["psnr"]),
+                "PSNR export (dB)": "identical" if np.isinf(c["psnr"]) else num(c["psnr"]),
+                "PSNR after platform (dB)": num(c["psnr_platform"]),
                 "Result": LEVEL_LABEL[c["level"]],
             }
             for name, c in conds.items()
@@ -196,10 +211,10 @@ def render_results(cache, stale):
             st.image(imgs["prot_view"], width="stretch")
 
     st.download_button(
-        "Download protected image (.jpg)",
+        "Download protected image (.png)",
         cache["encoded_buf"].tobytes(),
-        f"protected_{cache['crypto_hash'][:8]}.jpg",
-        "image/jpeg",
+        f"protected_{cache['crypto_hash'][:8]}.png",
+        "image/png",
         type="primary",
     )
 
@@ -244,6 +259,8 @@ def render_mask(cache):
     with b4:
         st.metric("Detector confidence", f"{conf_v:.2f}")
         st.markdown(badge(conf_v <= 0.05, "Face still detected", "Detector affected"), unsafe_allow_html=True)
+    st.caption("Fidelity is measured on the file you download. After a platform re-compresses it "
+               f"(JPEG {cache['params'][2]}): PSNR {ours['psnr_platform']:.2f} dB, SSIM {ours['ssim_platform']:.4f}.")
 
 
 def render_stress(cache):
@@ -353,7 +370,7 @@ def _upload_dialog(title, message):
         st.rerun()
 
 
-def render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps=25, *_):
+def render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps=25, auto=False, *_):
     from src.alignment import FAIL_NME, PARTIAL_NME
 
     st.caption("Runs the defense on many photos and compares it with two controls: JPEG only and random noise.")
@@ -397,7 +414,7 @@ def render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps=25, *_):
             per_image, robust, skipped = evaluate_images(
                 items, landmark_detector, face_detector, strength, jpeg_quality,
                 max_side=max_side, robustness=with_rob, progress=on_progress, mode=mode,
-                opt_iterations=opt_steps)
+                opt_iterations=opt_steps, auto_strength=auto)
             bar.empty()
             st.session_state.eval_result = {
                 "per_image": per_image, "robust": robust, "skipped": skipped, "n": len(items),
@@ -552,13 +569,20 @@ if st.sidebar.button("Sign out", width="stretch"):
 
 # ---- Sidebar: Parameters ----
 st.sidebar.markdown('<div class="side-title">Defense settings</div>', unsafe_allow_html=True)
-strength = st.sidebar.slider(
-    "Perturbation budget (strength %)", 1, 30, 8,
-    help="How strong the hidden pattern is. Higher disrupts more but changes the photo more.",
-) / 100.0
+auto_strength = st.sidebar.toggle(
+    "Set the strength automatically", value=True,
+    help="On: the app picks the strongest pattern that still keeps the exported photo at PSNR 38 dB or better "
+         "and SSIM 0.96 or better. Off: you choose the strength yourself.",
+)
+strength = 0.08
+if not auto_strength:
+    strength = st.sidebar.slider(
+        "Perturbation budget (strength %)", 1, 30, 8,
+        help="How strong the hidden pattern is. Higher moves the key points more but lowers photo quality.",
+    ) / 100.0
 jpeg_quality = st.sidebar.slider(
-    "Simulated JPEG quality", 40, 95, 75,
-    help="Simulates social-media compression to test that the protection survives it.",
+    "Platform re-compression (JPEG quality)", 40, 95, 75,
+    help="The quality a social platform re-compresses your photo to after you post it. The landmark tests run on this re-compressed copy; the photo you download is saved losslessly as PNG.",
 )
 size_label = st.sidebar.selectbox(
     "Working image size", list(SIZE_OPTIONS.keys()), index=1,
@@ -615,13 +639,14 @@ else:
             st.session_state.last_processed_file = file_sig
 
         trigger_defense = st.sidebar.button("Run blinding defense", type="primary", width="stretch")
-        params = (file_sig, round(float(strength), 3), int(jpeg_quality), max_side, mode, opt_steps)
+        params = (file_sig, round(float(strength), 3), int(jpeg_quality), max_side, mode, opt_steps, auto_strength)
 
         # Heavy computation runs once (first upload) or when the Run button is pressed
         if trigger_defense or st.session_state.defense_cache is None:
             with st.spinner("Running the defense and measuring the result..."):
                 result = process_image(image, landmark_detector, face_detector, strength, jpeg_quality,
-                                       max_side=max_side, mode=mode, opt_iterations=opt_steps)
+                                       max_side=max_side, mode=mode, opt_iterations=opt_steps,
+                                       auto_strength=auto_strength)
             result["params"] = params
             st.session_state.defense_cache = result
 
@@ -686,4 +711,4 @@ with tab3:
 with tab4:
     render_audit()
 with tab5:
-    render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps)
+    render_evaluation(strength, jpeg_quality, max_side, mode, opt_steps, auto_strength)

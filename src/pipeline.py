@@ -28,6 +28,12 @@ from src.perturbation import anchor_mask, apply_anchor_perturbation, apply_pertu
 
 CONDITION_ORDER = ["Ours", "JPEG only", "Random noise"]
 
+# The photo the user exports is saved losslessly (PNG). Fidelity (PSNR, SSIM) is judged on that file,
+# so it measures only what the pattern changed. A platform then re-compresses it as JPEG at jpeg_quality;
+# the landmark tests run on that second version.
+TARGET_PSNR = 38.0
+TARGET_SSIM = 0.96
+
 
 # ------------------------------------------------------------------
 # helpers
@@ -75,12 +81,55 @@ def matched_noise_baseline(image, mask, delta, seed=0):
     return np.clip(image.astype(np.float32) + raw * scale, 0, 255).astype(np.uint8)
 
 
-def _quality(original, candidate, mask):
+def _quality(original, exported, platform, mask):
     return {
-        "psnr": calculate_psnr(original, candidate),
-        "ssim": calculate_ssim(original, candidate),
-        "psnr_masked": calculate_psnr_masked(original, candidate, mask),
+        "psnr": calculate_psnr(original, exported),
+        "ssim": calculate_ssim(original, exported),
+        "psnr_masked": calculate_psnr_masked(original, exported, mask),
+        "psnr_platform": calculate_psnr(original, platform),
+        "ssim_platform": calculate_ssim(original, platform),
     }
+
+
+def calibrate_strength(image, mask, ref_face, mode, target_psnr=TARGET_PSNR, target_ssim=TARGET_SSIM,
+                       lo=0.01, hi=0.40):
+    """
+    Largest strength whose EXPORTED file still meets the quality target (PSNR and SSIM).
+    Returns (strength, target_reached). The pattern's energy sets the quality, so the fixed anchor
+    pattern is used to find the strength even when the searched pattern will be used later.
+    """
+    h, w = image.shape[:2]
+    fixed_mode = "anchors" if mode in ("anchors", "optimized") else mode
+    anchors = None
+    if fixed_mode == "anchors":
+        all_pts = landmarks_to_array(ref_face, w, h)
+        anchors = list(five_points(all_pts)) + [all_pts[133], all_pts[362]]
+
+    def exported(s):
+        if fixed_mode == "anchors":
+            _, ref = apply_perturbation(image, mask, strength=s, mode="luminance")
+            raw, _ = apply_anchor_perturbation(image, anchors, float(np.mean(ref.astype(np.float64) ** 2)))
+        else:
+            raw, _ = apply_perturbation(image, mask, strength=s, mode=fixed_mode)
+        return raw
+
+    if calculate_psnr(image, exported(lo)) < target_psnr:
+        return lo, False
+    if calculate_psnr(image, exported(hi)) >= target_psnr:
+        best = hi
+    else:
+        a, b = lo, hi
+        for _ in range(9):
+            mid = (a + b) / 2.0
+            a, b = (mid, b) if calculate_psnr(image, exported(mid)) >= target_psnr else (a, mid)
+        best = a
+    for _ in range(8):                      # SSIM is the slower check, so it is applied last
+        if calculate_ssim(image, exported(best)) >= target_ssim:
+            return best, True
+        best *= 0.9
+        if best < lo:
+            return lo, False
+    return best, False
 
 
 def _detect(landmark_detector, bgr):
@@ -133,7 +182,7 @@ def _aligned_view(image, M, size=240):
 # main entry point
 # ------------------------------------------------------------------
 def process_image(image, landmark_detector, face_detector, strength, jpeg_quality,
-                  max_side=None, with_baselines=True, with_visuals=True, seed=0, mode="rgb", opt_iterations=25):
+                  max_side=None, with_baselines=True, with_visuals=True, seed=0, mode="rgb", opt_iterations=25, auto_strength=False):
     clock = time.perf_counter
     t_start = clock()
     timings = {}
@@ -149,6 +198,12 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
         return {"face_found": False, "size": (w, h)}
 
     mask, mask_overlay = create_landmark_mask(image, ref_face)
+
+    calibrated_ok = None
+    if auto_strength:
+        t_cal = clock()
+        strength, calibrated_ok = calibrate_strength(image, mask, ref_face, mode)
+        timings["Strength calibration"] = clock() - t_cal
 
     t = clock()
     opt_history = None
@@ -176,33 +231,37 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
             timings["Optimization search"] = clock() - t_opt
     else:
         raw_protected, delta = apply_perturbation(image, mask, strength=strength, mode=mode)
-    protected, buf = jpeg_roundtrip(raw_protected, jpeg_quality)
-    timings["Perturbation + JPEG"] = clock() - t
+    export_img = raw_protected
+    _, buf = cv2.imencode(".png", export_img)
+    protected, _ = jpeg_roundtrip(export_img, jpeg_quality)       # what a platform keeps
+    timings["Perturbation + export"] = clock() - t
 
     t = clock()
     prot_face = _detect(landmark_detector, protected)
     timings["Landmarks on shielded"] = clock() - t
 
-    candidates = {"Ours": (protected, prot_face)}
+    candidates = {"Ours": (protected, prot_face, export_img)}
 
     if with_baselines:
         t = clock()
-        jpeg_img, _ = jpeg_roundtrip(image, jpeg_quality)
-        candidates["JPEG only"] = (jpeg_img, _detect(landmark_detector, jpeg_img))
+        jpeg_exp = image.copy()
+        jpeg_img, _ = jpeg_roundtrip(jpeg_exp, jpeg_quality)
+        candidates["JPEG only"] = (jpeg_img, _detect(landmark_detector, jpeg_img), jpeg_exp)
         noisy = matched_noise_baseline(image, mask, delta, seed=seed)
-        noisy_img, _ = jpeg_roundtrip(noisy, jpeg_quality)
-        candidates["Random noise"] = (noisy_img, _detect(landmark_detector, noisy_img))
+        noisy_exp = noisy
+        noisy_img, _ = jpeg_roundtrip(noisy_exp, jpeg_quality)
+        candidates["Random noise"] = (noisy_img, _detect(landmark_detector, noisy_img), noisy_exp)
         timings["Control conditions"] = clock() - t
 
     t = clock()
     conditions = {}
-    for name, (img, face) in candidates.items():
-        conditions[name] = {**measure_alignment(ref_face, face, w, h), **_quality(image, img, mask)}
+    for name, (img, face, exp) in candidates.items():
+        conditions[name] = {**measure_alignment(ref_face, face, w, h), **_quality(image, exp, img, mask)}
     timings["Alignment + quality metrics"] = clock() - t
 
     det_metrics = None
     if face_detector is not None:
-        det_metrics = evaluate_detection_drop(face_detector.detector, image, protected)
+        det_metrics = evaluate_detection_drop(face_detector.detector, image, export_img)
 
     ours = conditions["Ours"]
     result = {
@@ -216,6 +275,10 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
         "encoded_buf": buf,
         "crypto_hash": hashlib.sha256(buf.tobytes()).hexdigest().upper(),
         "opt_history": opt_history,
+        "strength_used": float(strength),
+        "auto_strength": bool(auto_strength),
+        "calibration_reached": calibrated_ok,
+        "quality_ok": bool(ours["psnr"] >= TARGET_PSNR and ours["ssim"] >= TARGET_SSIM),
         "arrays": {"image": image, "raw_protected": raw_protected, "protected": protected,
                    "mask": mask, "ref_face": ref_face},
     }
@@ -249,7 +312,7 @@ def process_image(image, landmark_detector, face_detector, strength, jpeg_qualit
             "prot_view": prot_view,
             "mask_overlay": cv2.cvtColor(mask_overlay, cv2.COLOR_BGR2RGB),
             "mask": mask,
-            "diff_map": cv2.cvtColor(generate_diff_visualization(image, protected), cv2.COLOR_BGR2RGB),
+            "diff_map": cv2.cvtColor(generate_diff_visualization(image, export_img), cv2.COLOR_BGR2RGB),
             "aligned_orig": a_orig,
             "aligned_prot": a_prot,
             "aligned_diff": a_diff,

@@ -1,0 +1,4 @@
+Condition,Images,Landmarks lost (%),Mean key-point error (% eye dist),Median key-point error (% eye dist),Mean alignment shift (px),Disrupted (%),Mean PSNR (dB),Mean PSNR in face region (dB),Mean SSIM,Quality target met (%),Mean strength (%),PSNR after platform (dB)
+Ours,28,7.1,0.98,1.02,0.32,7.1,38.03,36.46,0.9789,100.0,14.9,35.72
+JPEG only,28,0.0,0.68,0.56,0.21,0.0,,,1.0,100.0,14.9,39.55
+Random noise,28,0.0,0.77,0.62,0.22,0.0,38.07,36.48,0.9587,46.4,14.9,38.45
